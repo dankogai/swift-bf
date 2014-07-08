@@ -69,10 +69,8 @@ class BFI {
             }
         }
         obuf.append(CChar(0)) // \0 Terminate
-        var result = ""
-        for var i = 0; obuf[i] != CChar(0) ; i++ {
-            result += Character(UnicodeScalar(Int(obuf[i])))
+        return obuf.withUnsafePointerToElements {
+            String.fromCString(CString($0))!
         }
-        return result
     }
 }
