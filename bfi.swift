@@ -8,21 +8,21 @@
 
 class BFI {
     class var datasize:Int { return 65536 }
-    func str2chars(s:String) -> CChar[] {
-        var cs = CChar[]()
+    func str2chars(s:String) -> [CChar] {
+        var cs = [CChar]()
         for c in s.utf8 { cs += CChar(c) }
         return cs
     }
     @lazy var error:String? = nil
-    @lazy var code:CChar[]  = []
+    @lazy var code:[CChar]  = []
     @lazy var jump:Dictionary<Int,Int> = [:]
-    var data:CChar[] = []
-    var ibuf:CChar[] = []
-    var obuf:CChar[] = []
+    var data:[CChar] = []
+    var ibuf:[CChar] = []
+    var obuf:[CChar] = []
     var (pc, sp) = (0, 0)
     init(_ src:String) {
         code = str2chars(src)
-        var stak:Int[] = []
+        var stak:[Int] = []
         for (i,c) in enumerate(code) {
             let u = UnicodeScalar(Int(c))
             // println("\(i)=>\(u)")
@@ -42,9 +42,9 @@ class BFI {
             println("Brainfuck syntax error: \(error)")
             return nil
         }
-        data = CChar[](count:BFI.datasize, repeatedValue:CChar(0))
+        data = [CChar](count:BFI.datasize, repeatedValue:CChar(0))
         ibuf = str2chars(input)
-        obuf = CChar[]()
+        obuf = [CChar]()
         (pc, sp) = (0, 0)
         loop: for ; 0 <= pc && pc < code.count; pc++ {
             switch UnicodeScalar(Int(code[pc])) {
@@ -69,8 +69,10 @@ class BFI {
             }
         }
         obuf.append(CChar(0)) // \0 Terminate
-        return obuf.withUnsafePointerToElements {
-            p in String.fromCString(p)
+        var result = ""
+        for var i = 0; obuf[i] != CChar(0) ; i++ {
+            result += Character(UnicodeScalar(Int(obuf[i])))
         }
+        return result
     }
 }
