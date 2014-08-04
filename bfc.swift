@@ -14,19 +14,20 @@ func bfc(src:String) -> String {
     ];
     for c in src {
         switch c {
-        case ">": lines += "sp++"
-        case "<": lines += "sp--"
-        case "+": lines += "data[sp]++"
-        case "-": lines += "data[sp]--"
-        case "[": lines += "while data[sp] != CChar(0) {"
-        case "]": lines += "}"
-        case ".": lines += "putchar(Int32(data[sp]))"
-        case ",": lines +=
+        case ">": lines.append("sp++")
+        case "<": lines.append("sp--")
+        case "+": lines.append("data[sp]++")
+        case "-": lines.append("data[sp]--")
+        case "[": lines.append("while data[sp] != CChar(0) {")
+        case "]": lines.append("}")
+        case ".": lines.append("putchar(Int32(data[sp]))")
+        case ",": lines.append(
             "data[sp] = {c in CChar(c < 0 ? 0 : c)}(getchar())"
+            )
         default:
             continue
         }
     }
-    lines += ""
+    lines.append("")
     return Swift.join("\n", lines)
 }

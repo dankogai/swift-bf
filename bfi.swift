@@ -10,12 +10,12 @@ class BFI {
     class var datasize:Int { return 65536 }
     func str2chars(s:String) -> [CChar] {
         var cs = [CChar]()
-        for c in s.utf8 { cs += CChar(c) }
+        for c in s.utf8 { cs.append(CChar(c)) }
         return cs
     }
-    @lazy var error:String? = nil
-    @lazy var code:[CChar]  = []
-    @lazy var jump:Dictionary<Int,Int> = [:]
+    lazy var error:String? = nil
+    lazy var code:[CChar]  = []
+    lazy var jump:Dictionary<Int,Int> = [:]
     var data:[CChar] = []
     var ibuf:[CChar] = []
     var obuf:[CChar] = []
@@ -38,7 +38,7 @@ class BFI {
         if !stak.isEmpty { error = "too many [s"; return }
     }
     func run(input:String = "") -> String? {
-        if error {
+        if error != nil {
             println("Brainfuck syntax error: \(error)")
             return nil
         }
@@ -69,8 +69,6 @@ class BFI {
             }
         }
         obuf.append(CChar(0)) // \0 Terminate
-        return obuf.withUnsafePointerToElements {
-            String.fromCString(CString($0))!
-        }
+        return String.fromCString(&obuf)!
     }
 }
