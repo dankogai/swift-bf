@@ -1,19 +1,17 @@
 public struct BF {
-    public static var datasize:Int { return 65536 }
-    static func str2chars(_ s:String) -> [CChar] {
-        var cs = [CChar]()
-        for c in s.utf8 { cs.append(CChar(c)) }
-        return cs
-    }
-    let code:[CChar]
-    let jump:Dictionary<Int,Int>
+    public static let datasize = 65536
+    public let code:[CChar]
+    public let jump:Dictionary<Int,Int>
+    public var data = [CChar](repeating: CChar(0), count:Self.datasize);
+    public var ibuf = [CChar]()
+    public var obuf = [CChar]()
+    public var (pc, sp) = (0, 0)
     public init?(_ src:String) {
-        self.code = Self.str2chars(src)
+        self.code =  src.utf8.map{CChar($0)}
         var stak:[Int] = []
         var jump:Dictionary<Int,Int> = [:]
         for (i,c) in code.enumerated() {
             let u = UnicodeScalar(Int(c))
-            // println("\(i)=>\(u)")
             if u == "[" {
                 stak.append(i)
             } else if u == "]" {
@@ -26,42 +24,45 @@ public struct BF {
         if !stak.isEmpty { /* error = "too many [s" */ return nil }
         self.jump = jump
     }
-    public func run(input:String = "") -> String {
-        var data = [CChar](repeating: CChar(0), count:Self.datasize)
-        var ibuf = Self.str2chars(input)
-        var obuf = [CChar]()
-        var (pc, sp) = (0, 0)
-        loop: while 0 <= pc && pc < code.count {
-            switch UnicodeScalar(Int(code[pc])) {
-            case ">": sp += 1
-            case "<": sp -= 1
-            case "+": data[sp] += 1
-            case "-": data[sp] -= 1
-            case "[":
-                if data[sp] == CChar(0) { pc = jump[pc]! }
-            case "]":
-                if data[sp] != CChar(0) { pc = jump[pc]! }
-            case ".":
-                obuf.append(data[sp])
-            case ",":
-                if ibuf.isEmpty {
-                    break loop
-                } else {
-                    data[sp] = ibuf.remove(at:0)
-                }
-            default:
-                continue
+    public mutating func reset() {
+        data = [CChar](repeating: CChar(0), count:Self.datasize);
+        ibuf = [CChar]()
+        obuf = [CChar]()
+        (pc, sp) = (0, 0)
+    }
+    public mutating func step() -> Bool {
+        guard 0 <= pc && pc < code.count else { return false }
+        switch UnicodeScalar(Int(code[pc])) {
+        case ">": sp += 1
+        case "<": sp -= 1
+        case "+": data[sp] += 1
+        case "-": data[sp] -= 1
+        case "[": if data[sp] == CChar(0) { pc = jump[pc]! }
+        case "]": if data[sp] != CChar(0) { pc = jump[pc]! }
+        case ".": obuf.append(data[sp])
+        case ",":
+            if ibuf.isEmpty {
+                return false
+            } else {
+                data[sp] = ibuf.removeFirst()
             }
-            pc += 1
+        default:
+            return false
         }
+        pc += 1
+        return true;
+    }
+    public mutating func run(input:String = "") -> String {
+        reset()
+        ibuf = input.utf8.map{CChar($0)}
+        while self.step() {}
         obuf.append(CChar(0)) // \0 Terminate
         return String(cString:&obuf)
     }
     public static func compile(src:String) -> String {
-        var datasize:Int { return 65536 }
         var lines = [
             "import Darwin",
-            "var data = [CChar](repeating: CChar(0), count:\(datasize))",
+            "var data = [CChar](repeating: CChar(0), count:\(Self.datasize))",
             "var (sp, pc) = (0, 0)",
         ];
         for c in src {
