@@ -36,3 +36,21 @@ putchar(Int32(data[sp]))
 data[sp]-=1
 
 ```
+
+## Usage
+
+Add this project to your `Package.swift`.
+
+```swift
+
+import PackageDescription
+let package = Package(
+  // ...
+  dependencies: [
+    .Package(
+      url: "https://github.com/dankogai/swift-bf.git", .branch("main")
+    )
+  ],
+  // ...
+)
+```
