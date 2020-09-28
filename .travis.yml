@@ -9,8 +9,8 @@ matrix:
       osx_image: xcode12
 script:
   - swift test -c release -Xswiftc -enable-testing
-before_install:
-  - chmod a+x ./scripts/travis-prep.sh
-  - . ./scripts/travis-prep.sh
+#before_install:
+#  - chmod a+x ./scripts/travis-prep.sh
+#  - . ./scripts/travis-prep.sh
 notifications:
   email: false
