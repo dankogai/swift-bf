@@ -1,3 +1,7 @@
+[![Swift 5](https://img.shields.io/badge/swift-5-blue.svg)](https://swift.org)
+[![MIT LiCENSE](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![build status](https://secure.travis-ci.org/dankogai/swift-bf.png)](http://travis-ci.org/dankogai/swift-bf)
+
 swift-bf
 ========
 
