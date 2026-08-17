@@ -1,84 +1,153 @@
-public struct BF {
+/// A Brainfuck interpreter, and a Brainfuck-to-Swift compiler.
+///
+/// ```swift
+/// var bf = try BF("+[,<>.]-")          // echo
+/// print(bf.run(input: "Hello, Swift!")) // Hello, Swift!
+/// ```
+public struct BF: Sendable {
+    /// The number of cells on the data tape.
     public static let datasize = 65536
-    public let code:[CChar]
-    public let jump:Dictionary<Int,Int>
-    public var data = [CChar](repeating: CChar(0), count:Self.datasize);
-    public var ibuf = [CChar]()
-    public var obuf = [CChar]()
-    public var (pc, sp) = (0, 0)
-    public init?(_ src:String) {
-        self.code =  src.utf8.map{CChar($0)}
-        var stak:[Int] = []
-        var jump:Dictionary<Int,Int> = [:]
-        for (i,c) in code.enumerated() {
-            let u = UnicodeScalar(Int(c))
-            if u == "[" {
-                stak.append(i)
-            } else if u == "]" {
-                if stak.isEmpty { /* error = "too many ]s" */ return nil }
-                let f = stak.removeLast()
-                jump[f] = i
-                jump[i] = f
+
+    /// The eight Brainfuck commands.  Every other character is a comment.
+    public enum Command: UInt8, Sendable, CaseIterable {
+        case next  = 0x3E // >  move the pointer right
+        case prev  = 0x3C // <  move the pointer left
+        case incr  = 0x2B // +  increment the cell under the pointer
+        case decr  = 0x2D // -  decrement the cell under the pointer
+        case begin = 0x5B // [  jump past the matching ] if the cell is zero
+        case end   = 0x5D // ]  jump back to the matching [ if the cell is not zero
+        case put   = 0x2E // .  append the cell to the output
+        case get   = 0x2C // ,  read one byte of input into the cell
+    }
+
+    /// Why a source string is not a valid Brainfuck program.
+    public enum ParseError: Error, Equatable, Sendable, CustomStringConvertible {
+        /// A `[` at the given UTF-8 offset never gets closed.
+        case unmatchedBegin(at: Int)
+        /// A `]` at the given UTF-8 offset has no `[` to close.
+        case unmatchedEnd(at: Int)
+        public var description: String {
+            switch self {
+            case .unmatchedBegin(let i): "unmatched [ at offset \(i)"
+            case .unmatchedEnd(let i):   "unmatched ] at offset \(i)"
             }
         }
-        if !stak.isEmpty { /* error = "too many [s" */ return nil }
-        self.jump = jump
     }
-    public mutating func reset() {
-        data = [CChar](repeating: CChar(0), count:Self.datasize);
-        ibuf = [CChar]()
-        obuf = [CChar]()
-        (pc, sp) = (0, 0)
-    }
-    public mutating func step() -> Bool {
-        guard 0 <= pc && pc < code.count else { return false }
-        switch UnicodeScalar(Int(code[pc])) {
-        case ">": sp += 1
-        case "<": sp -= 1
-        case "+": data[sp] += 1
-        case "-": data[sp] -= 1
-        case "[": if data[sp] == CChar(0) { pc = jump[pc]! }
-        case "]": if data[sp] != CChar(0) { pc = jump[pc]! }
-        case ".": obuf.append(data[sp])
-        case ",":
-            if ibuf.isEmpty {
-                return false
-            } else {
-                data[sp] = ibuf.removeFirst()
-            }
-        default:
-            return false
+
+    /// The program, with comments stripped.
+    public let code: [Command]
+    /// Maps the index of every `[` to its matching `]`, and vice versa.
+    public let jump: [Int: Int]
+
+    /// The data tape.
+    public private(set) var data = [UInt8](repeating: 0, count: BF.datasize)
+    /// The input not yet consumed by `,`.
+    public private(set) var ibuf: ArraySlice<UInt8> = []
+    /// Everything `.` has written so far.
+    public private(set) var obuf: [UInt8] = []
+    /// The program counter -- an index into `code`.
+    public private(set) var pc = 0
+    /// The data pointer -- an index into `data`.
+    public private(set) var sp = 0
+
+    /// Parses `src` and matches up its brackets.
+    /// - Throws: ``ParseError`` if the brackets do not balance.
+    public init(_ src: String) throws(ParseError) {
+        var code = [Command]()
+        var offsets = [Int]()   // where each command came from, for diagnostics
+        for (offset, byte) in src.utf8.enumerated() {
+            guard let command = Command(rawValue: byte) else { continue }
+            code.append(command)
+            offsets.append(offset)
         }
-        pc += 1
-        return true;
-    }
-    public mutating func run(input:String = "") -> String {
-        reset()
-        ibuf = input.utf8.map{CChar($0)}
-        while self.step() {}
-        obuf.append(CChar(0)) // \0 Terminate
-        return String(cString:&obuf)
-    }
-    public static func compile(src:String) -> String {
-        var lines = [
-            "import Darwin",
-            "var data = [CChar](repeating: CChar(0), count:\(Self.datasize))",
-            "var (sp, pc) = (0, 0)",
-        ];
-        for c in src {
-            switch c {
-            case ">": lines.append("sp+=1")
-            case "<": lines.append("sp-=1")
-            case "+": lines.append("data[sp]+=1")
-            case "-": lines.append("data[sp]-=1")
-            case "[": lines.append("while data[sp] != CChar(0) {")
-            case "]": lines.append("}")
-            case ".": lines.append("putchar(Int32(data[sp]))")
-            case ",": lines.append(
-                "data[sp] = {c in CChar(c < 0 ? 0 : c)}(getchar())"
-                )
+        var stack = [Int]()
+        var jump = [Int: Int]()
+        for (i, command) in code.enumerated() {
+            switch command {
+            case .begin:
+                stack.append(i)
+            case .end:
+                guard let begin = stack.popLast() else {
+                    throw ParseError.unmatchedEnd(at: offsets[i])
+                }
+                jump[begin] = i
+                jump[i] = begin
             default:
                 continue
+            }
+        }
+        if let begin = stack.first {
+            throw ParseError.unmatchedBegin(at: offsets[begin])
+        }
+        self.code = code
+        self.jump = jump
+    }
+
+    /// Rewinds to the start of the program with a blank tape.
+    public mutating func reset() {
+        data = [UInt8](repeating: 0, count: Self.datasize)
+        ibuf = []
+        obuf = []
+        (pc, sp) = (0, 0)
+    }
+
+    /// Executes the command under the program counter.
+    /// The tape is circular: moving past either end wraps around to the other.
+    /// - Returns: `false` once the program halts -- either the end of the code,
+    ///   or a `,` with no input left.
+    @discardableResult
+    public mutating func step() -> Bool {
+        guard code.indices.contains(pc) else { return false }
+        switch code[pc] {
+        case .next:  sp = (sp + 1) % data.count
+        case .prev:  sp = (sp + data.count - 1) % data.count
+        case .incr:  data[sp] &+= 1
+        case .decr:  data[sp] &-= 1
+        case .begin: if data[sp] == 0 { pc = jump[pc]! }
+        case .end:   if data[sp] != 0 { pc = jump[pc]! }
+        case .put:   obuf.append(data[sp])
+        case .get:
+            guard let byte = ibuf.popFirst() else { return false }
+            data[sp] = byte
+        }
+        pc += 1
+        return true
+    }
+
+    /// Runs the program from the beginning and returns everything it wrote.
+    public mutating func run(input: String = "") -> String {
+        reset()
+        ibuf = ArraySlice(input.utf8)
+        while step() {}
+        return String(decoding: obuf, as: UTF8.self)
+    }
+
+    /// Translates `src` into an equivalent, standalone Swift program.
+    public static func compile(_ src: String) -> String {
+        var lines = [
+            "#if canImport(Darwin)",
+            "import Darwin",
+            "#else",
+            "import Glibc",
+            "#endif",
+            "var data = [UInt8](repeating: 0, count: \(datasize))",
+            "var sp = 0",
+        ]
+        var depth = 0
+        func append(_ line: String) {
+            lines.append(String(repeating: "    ", count: depth) + line)
+        }
+        for byte in src.utf8 {
+            guard let command = Command(rawValue: byte) else { continue }
+            switch command {
+            case .next:  append("sp = (sp + 1) % data.count")
+            case .prev:  append("sp = (sp + data.count - 1) % data.count")
+            case .incr:  append("data[sp] &+= 1")
+            case .decr:  append("data[sp] &-= 1")
+            case .begin: append("while data[sp] != 0 {"); depth += 1
+            case .end:   depth = max(0, depth - 1); append("}")
+            case .put:   append("putchar(Int32(data[sp]))")
+            case .get:   append("data[sp] = UInt8(truncatingIfNeeded: max(0, getchar()))")
             }
         }
         lines.append("")
