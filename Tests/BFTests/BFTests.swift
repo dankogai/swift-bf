@@ -91,4 +91,69 @@ struct BFTests {
     func compileComments() {
         #expect(BF.compile("+ increment") == BF.compile("+"))
     }
+
+    // MARK: - the ! extension
+
+    @Test("takes its input from the source after !")
+    func embeddedInput() throws {
+        var bf = try BF("+[,<>.]-!Hello, Swift!")
+        #expect(bf.run() == "Hello, Swift!")
+    }
+
+    @Test("splits on the first ! only, so the input may contain more")
+    func firstBangWins() throws {
+        var bf = try BF("+[,.]!a!b!c")
+        #expect(bf.embeddedInput == Array("a!b!c".utf8))
+        #expect(bf.run() == "a!b!c")
+    }
+
+    @Test("treats the input section as data, not code")
+    func inputIsNotCode() throws {
+        // The unbalanced [ and the +- after ! must not be parsed as commands.
+        var bf = try BF("+[,.]![+-")
+        #expect(bf.code.count == 5)
+        #expect(bf.run() == "[+-")
+    }
+
+    @Test("has no embedded input when the source has no !")
+    func noBang() throws {
+        var bf = try BF("+[,.]")
+        #expect(bf.embeddedInput.isEmpty)
+        #expect(bf.run() == "")
+        #expect(bf.run(input: "still works") == "still works")
+    }
+
+    @Test("lets an explicit input: argument override the embedded one")
+    func explicitInputWins() throws {
+        var bf = try BF("+[,.]!embedded")
+        #expect(bf.run(input: "explicit") == "explicit")
+        #expect(bf.run() == "embedded")   // and the embedded input survives
+    }
+
+    @Test("restores the embedded input on reset(), so stepping works")
+    func embeddedInputSurvivesReset() throws {
+        var bf = try BF("+[,.]!hi")
+        while bf.step() {}
+        #expect(String(decoding: bf.obuf, as: UTF8.self) == "hi")
+        bf.reset()
+        #expect(bf.ibuf.elementsEqual(Array("hi".utf8)))
+    }
+
+    @Test("bakes the embedded input into the compiled program")
+    func compileEmbeddedInput() {
+        let swift = BF.compile("+[,.]!hi")
+        #expect(swift.contains(#"var input = Array("hi".utf8)[...]"#))
+        #expect(swift.contains("data[sp] = input.popFirst() ?? 0"))
+        #expect(!swift.contains("getchar()"))
+        // Without a !, the generated program still reads stdin.
+        #expect(BF.compile("+[,.]").contains("getchar()"))
+    }
+
+    @Test("escapes the embedded input it emits as a Swift literal")
+    func compileEscapesInput() {
+        #expect(BF.literal(Array(#"a"b\c"#.utf8)) == #""a\"b\\c""#)
+        #expect(BF.literal(Array("tab\tnl\n".utf8)) == #""tab\tnl\n""#)
+        #expect(BF.literal([0x01]) == #""\u{1}""#)
+        #expect(BF.literal(Array("Swift".utf8)) == #""Swift""#)
+    }
 }
