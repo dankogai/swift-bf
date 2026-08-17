@@ -92,7 +92,7 @@ Add it to the `dependencies` of your `Package.swift`:
 let package = Package(
   // ...
   dependencies: [
-    .package(url: "https://github.com/dankogai/swift-bf.git", branch: "main")
+    .package(url: "https://github.com/dankogai/swift-bf.git", from: "0.0.1")
   ],
   targets: [
     .target(name: "YourTarget", dependencies: [
