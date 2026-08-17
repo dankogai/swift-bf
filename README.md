@@ -1,4 +1,4 @@
-[![Swift 6](https://img.shields.io/badge/swift-6-orange.svg)](https://swift.org)
+[![Swift 6](https://img.shields.io/badge/swift-6-green.svg)](https://swift.org)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/dankogai/swift-bf/actions/workflows/swift.yml/badge.svg)](https://github.com/dankogai/swift-bf/actions/workflows/swift.yml)
 
