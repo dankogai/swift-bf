@@ -1,14 +1,27 @@
 /// A Brainfuck interpreter, and a Brainfuck-to-Swift compiler.
 ///
 /// ```swift
-/// var bf = try BF("+[,<>.]-")          // echo
+/// var bf = try BF("+[,<>.]-")           // echo
 /// print(bf.run(input: "Hello, Swift!")) // Hello, Swift!
+/// ```
+///
+/// A `!` in the source ends the program and makes everything after it the
+/// program's input, so a program can carry its own data:
+///
+/// ```swift
+/// var bf = try BF("+[,<>.]-!Hello, Swift!")
+/// print(bf.run())                       // Hello, Swift!
 /// ```
 public struct BF: Sendable {
     /// The number of cells on the data tape.
     public static let datasize = 65536
 
-    /// The eight Brainfuck commands.  Every other character is a comment.
+    /// Separates the program from its input.  Everything after the first `!`
+    /// in a source string is data rather than code.
+    public static let inputSeparator = UInt8(ascii: "!")
+
+    /// The eight Brainfuck commands.  Every other character is a comment,
+    /// except `!`, which ends the program -- see ``inputSeparator``.
     public enum Command: UInt8, Sendable, CaseIterable {
         case next  = 0x3E // >  move the pointer right
         case prev  = 0x3C // <  move the pointer left
@@ -38,6 +51,8 @@ public struct BF: Sendable {
     public let code: [Command]
     /// Maps the index of every `[` to its matching `]`, and vice versa.
     public let jump: [Int: Int]
+    /// The input carried in the source after `!`; empty if there was no `!`.
+    public let embeddedInput: [UInt8]
 
     /// The data tape.
     public private(set) var data = [UInt8](repeating: 0, count: BF.datasize)
@@ -50,12 +65,28 @@ public struct BF: Sendable {
     /// The data pointer -- an index into `data`.
     public private(set) var sp = 0
 
+    /// Splits a source string at the first `!` into program and input.
+    /// Both halves are byte offsets into `src`, so diagnostics stay accurate.
+    static func split(_ src: String) -> (program: ArraySlice<UInt8>, input: [UInt8]) {
+        let bytes = Array(src.utf8)
+        guard let bang = bytes.firstIndex(of: inputSeparator) else {
+            return (bytes[...], [])
+        }
+        return (bytes[..<bang], Array(bytes[bytes.index(after: bang)...]))
+    }
+
     /// Parses `src` and matches up its brackets.
-    /// - Throws: ``ParseError`` if the brackets do not balance.
+    ///
+    /// Everything after the first `!` becomes ``embeddedInput`` rather than
+    /// code, so brackets in the input section are data and do not have to
+    /// balance.
+    /// - Throws: ``ParseError`` if the brackets in the program do not balance.
     public init(_ src: String) throws(ParseError) {
+        let (program, input) = Self.split(src)
+        self.embeddedInput = input
         var code = [Command]()
         var offsets = [Int]()   // where each command came from, for diagnostics
-        for (offset, byte) in src.utf8.enumerated() {
+        for (offset, byte) in program.enumerated() {
             guard let command = Command(rawValue: byte) else { continue }
             code.append(command)
             offsets.append(offset)
@@ -81,12 +112,14 @@ public struct BF: Sendable {
         }
         self.code = code
         self.jump = jump
+        self.ibuf = input[...]
     }
 
-    /// Rewinds to the start of the program with a blank tape.
+    /// Rewinds to the start of the program with a blank tape, ready to be
+    /// stepped again.  Any ``embeddedInput`` is restored along with it.
     public mutating func reset() {
         data = [UInt8](repeating: 0, count: Self.datasize)
-        ibuf = []
+        ibuf = embeddedInput[...]
         obuf = []
         (pc, sp) = (0, 0)
     }
@@ -115,15 +148,23 @@ public struct BF: Sendable {
     }
 
     /// Runs the program from the beginning and returns everything it wrote.
-    public mutating func run(input: String = "") -> String {
+    /// - Parameter input: The input to feed `,`.  Defaults to ``embeddedInput``
+    ///   -- the text after `!` in the source, or nothing if there was no `!`.
+    ///   Passing a value overrides it.
+    public mutating func run(input: String? = nil) -> String {
         reset()
-        ibuf = ArraySlice(input.utf8)
+        if let input { ibuf = ArraySlice(input.utf8) }
         while step() {}
         return String(decoding: obuf, as: UTF8.self)
     }
 
     /// Translates `src` into an equivalent, standalone Swift program.
+    ///
+    /// If `src` carries its own input after a `!`, that input is baked into
+    /// the generated program and `,` reads from it.  Otherwise `,` reads
+    /// stdin, storing 0 at end of input.
     public static func compile(_ src: String) -> String {
+        let (program, input) = split(src)
         var lines = [
             "#if canImport(Darwin)",
             "import Darwin",
@@ -133,11 +174,14 @@ public struct BF: Sendable {
             "var data = [UInt8](repeating: 0, count: \(datasize))",
             "var sp = 0",
         ]
+        if !input.isEmpty {
+            lines.append("var input = Array(\(literal(input)).utf8)[...]")
+        }
         var depth = 0
         func append(_ line: String) {
             lines.append(String(repeating: "    ", count: depth) + line)
         }
-        for byte in src.utf8 {
+        for byte in program {
             guard let command = Command(rawValue: byte) else { continue }
             switch command {
             case .next:  append("sp = (sp + 1) % data.count")
@@ -147,10 +191,38 @@ public struct BF: Sendable {
             case .begin: append("while data[sp] != 0 {"); depth += 1
             case .end:   depth = max(0, depth - 1); append("}")
             case .put:   append("putchar(Int32(data[sp]))")
-            case .get:   append("data[sp] = UInt8(truncatingIfNeeded: max(0, getchar()))")
+            case .get:
+                if input.isEmpty {
+                    append("data[sp] = UInt8(truncatingIfNeeded: max(0, getchar()))")
+                } else {
+                    append("data[sp] = input.popFirst() ?? 0")
+                }
             }
         }
         lines.append("")
         return lines.joined(separator: "\n")
+    }
+
+    /// Renders `bytes` as a Swift string literal, for embedding in generated
+    /// source.  The bytes always came from a `String`, so they are valid UTF-8.
+    static func literal(_ bytes: [UInt8]) -> String {
+        var out = "\""
+        for scalar in String(decoding: bytes, as: UTF8.self).unicodeScalars {
+            switch scalar {
+            case "\\": out += #"\\"#
+            case "\"": out += #"\""#
+            case "\n": out += #"\n"#
+            case "\r": out += #"\r"#
+            case "\t": out += #"\t"#
+            case "\0": out += #"\0"#
+            default:
+                if scalar.value < 0x20 || scalar.value == 0x7F {
+                    out += #"\u{"# + String(scalar.value, radix: 16) + "}"
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return out + "\""
     }
 }

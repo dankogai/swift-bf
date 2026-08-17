@@ -37,6 +37,29 @@ while bf.step() {}
 print(bf.data[0])  // 2
 ```
 
+### The `!` extension
+
+A `!` ends the program, and everything after it is the program's input, so a
+source can carry its own data:
+
+```swift
+var bf = try BF("+[,<>.]-!Hello, Swift!")
+print(bf.run())  // Hello, Swift!
+```
+
+The text after `!` is available as `embeddedInput`, and is what `run()` feeds
+`,` by default.  Passing `input:` explicitly overrides it for that run without
+discarding it:
+
+```swift
+var bf = try BF("+[,.]!embedded")
+print(bf.run(input: "explicit"))  // explicit
+print(bf.run())                   // embedded
+```
+
+Only the first `!` splits the source, so the input may contain more of them --
+which is why `"+[,<>.]-!Hello, Swift!"` echoes the trailing `!` too.
+
 ### Compiler
 
 ```swift
@@ -72,13 +95,34 @@ swiftc -o echo echo.swift
 echo 'Hello, Swift!' | ./echo
 ```
 
+A source using `!` compiles to a self-contained program that needs no stdin --
+the input is baked in and `,` reads from it:
+
+```swift
+print(BF.compile("+[,<>.]-!Hello, Swift!"))
+```
+
+emits the same program as above, but with
+
+```swift
+var input = Array("Hello, Swift!".utf8)[...]
+```
+
+after the preamble, and `,` compiled to
+
+```swift
+data[sp] = input.popFirst() ?? 0
+```
+
 ## Semantics
 
 * The tape is 65536 cells of `UInt8`.  Cells wrap around: `-` on a zero cell
   yields 255.
 * The tape is circular.  `<` on cell 0 moves to cell 65535, and `>` on the
   last cell moves back to cell 0.
-* Any character other than `> < + - [ ] . ,` is a comment.
+* `!` ends the program; everything after the first one is input, not code.
+  Brackets in the input section are data and need not balance.
+* Any other character outside the input section is a comment.
 * On end of input, `,` halts the interpreter, whereas compiled code follows
   the other common convention and stores 0.
 
